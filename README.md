@@ -19,6 +19,7 @@ Ce projet permet d'extraire et de sauvegarder les transactions depuis l'API WebS
 - `pin`: Votre code PIN de Trade Republic.
 - `output_format`: Le format de sortie des données (json ou csv).
 - `output_folder`: Le dossier où les données exportées seront sauvegardées.
+- `extract_details`: Active la récupération du détail des transactions via l’appel timelineDetailV2 pour un historique plus complet (nombre de titres, cours du titre, impôt, etc.). Cela ralentit cependant le processus de collecte des informations.
 
 Exemple:
 
@@ -30,6 +31,7 @@ pin = 1234
 [general]
 output_format = csv
 output_folder = out
+extract_details = true
 ```
 
 Ouvrez votre invite de commandes / terminal, naviguez jusqu’au dossier `trade_republic_scraper` et installez les dépendances Python nécessaires :
