@@ -109,10 +109,6 @@ async def fetch_transaction_details(websocket, transaction_id, token, message_id
     response = await websocket.recv()
     await websocket.send(f"unsub {message_id}")
     await websocket.recv()
-    # try:
-    #     await asyncio.wait_for(websocket.recv(), timeout=5)  # 5 secondes de délai
-    # except asyncio.TimeoutError:
-    #     print(f"⚠️ Le détail de la transaction '{transaction_id}' n'a pas pu être récupéré.")
 
     start_index = response.find('{')
     end_index = response.rfind('}')
