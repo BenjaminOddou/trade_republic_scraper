@@ -29,17 +29,17 @@ def headers_to_dict(response):
 
 def flatten_and_clean_json(all_data, sep='.'):
     """
-    Aplatit des données JSON imbriquées et réorganise les colonnes en fonction des objets les plus complets.
+    Aplatit des données JSON imbriquées et préserve l'ordre des colonnes.
 
     :param all_data: Liste de dictionnaires JSON à aplatir.
     :param sep: Séparateur utilisé pour les clés aplaties.
     :return: Liste de dictionnaires aplatis et nettoyés.
     """
-    all_keys = set()
+    all_keys = []  # Utilisé pour conserver l'ordre des colonnes
     flattened_data = []
 
     def flatten(nested_json, parent_key=''):
-        """Fonction interne pour aplatir un JSON imbriqué."""
+        """Aplatit récursivement un JSON imbriqué."""
         flat_dict = {}
         for key, value in nested_json.items():
             new_key = f'{parent_key}{sep}{key}' if parent_key else key
@@ -47,22 +47,21 @@ def flatten_and_clean_json(all_data, sep='.'):
                 flat_dict.update(flatten(value, new_key))
             else:
                 flat_dict[new_key] = value
-            all_keys.add(new_key)
+
+            if new_key not in all_keys:
+                all_keys.append(new_key)
+
         return flat_dict
 
+    # Aplatir toutes les entrées et collecter toutes les colonnes possibles
     for item in all_data:
         flat_item = flatten(item)
         flattened_data.append(flat_item)
 
-    max_properties_object = max(flattened_data, key=len)
-    column_order = list(max_properties_object.keys())
+    # Assurer que chaque dictionnaire a toutes les colonnes, avec ordre inchangé
+    complete_data = [{key: item.get(key, None) for key in all_keys} for item in flattened_data]
 
-    cleaned_data = []
-    for item in flattened_data:
-        cleaned_item = {key: item[key] for key in column_order if key in item and item[key] is not None}
-        cleaned_data.append(cleaned_item)
-
-    return cleaned_data
+    return complete_data
 
 def transform_data_types(df):
     """
@@ -86,18 +85,78 @@ def transform_data_types(df):
     
     return df
 
-async def fetch_all_transactions(token):
+async def fetch_transaction_details(websocket, transaction_id, token, message_id):
     """
-    Fonction principale :
-    Récupère toutes les transactions via WebSocket et les sauvegarde dans un fichier.
+    Récupère les détails d'une transaction spécifique via WebSocket.
+    
+    Cette fonction envoie une requête WebSocket pour récupérer les informations détaillées d'une transaction 
+    spécifique en utilisant son `transaction_id`. Elle récupère ensuite une réponse et extrait les informations 
+    demandées, notamment les éléments de la section "Transaction". Si une erreur ou un délai se produit, un message 
+    d'avertissement est imprimé. La fonction retourne un dictionnaire contenant les informations extraites de la transaction.
+    
+    :param websocket: L'objet WebSocket déjà connecté à l'API de TradeRepublic.
+    :param transaction_id: L'identifiant unique de la transaction pour laquelle les détails doivent être récupérés.
+    :param token: Le token de session utilisé pour l'authentification.
+    :param message_id: L'identifiant du message qui est incrémenté à chaque requête pour éviter les conflits dans les abonnements.
 
-    :param token: Token de session pour authentification.
+    :return: Un tuple contenant deux éléments :
+        - `transaction_data`: Un dictionnaire avec les informations extraites de la transaction.
+        - `message_id`: L'ID du message incrémenté après chaque requête pour gérer l'abonnement/désabonnement.
+    """
+    payload = {"type": "timelineDetailV2", "id": transaction_id, "token": token}
+    message_id += 1
+    await websocket.send(f"sub {message_id} {json.dumps(payload)}")
+    response = await websocket.recv()
+    await websocket.send(f"unsub {message_id}")
+    await websocket.recv()
+    # try:
+    #     await asyncio.wait_for(websocket.recv(), timeout=5)  # 5 secondes de délai
+    # except asyncio.TimeoutError:
+    #     print(f"⚠️ Le détail de la transaction '{transaction_id}' n'a pas pu être récupéré.")
+
+    start_index = response.find('{')
+    end_index = response.rfind('}')
+    response_data = json.loads(response[start_index:end_index + 1] if start_index != -1 and end_index != -1 else "{}")
+
+    transaction_data = {}
+
+    for section in response_data.get("sections", []):
+        if section.get("title") == "Transaction":
+            for item in section.get("data", []):
+                header = item.get("title")
+                value = item.get("detail", {}).get("text")
+                if header and value:
+                    transaction_data[header] = value
+
+    return transaction_data, message_id
+
+async def fetch_all_transactions(token, extract_details):
+    """
+    Fonction principale qui récupère toutes les transactions via WebSocket et les sauvegarde dans un fichier.
+    
+    Cette fonction se connecte à l'API WebSocket de TradeRepublic pour récupérer les informations 
+    relatives aux transactions de l'utilisateur, soit sous forme de JSON, soit sous forme de CSV. 
+    Si l'option `details` est activée, elle récupère les détails des transactions supplémentaires.
+    
+    Le processus implique l'abonnement à un flux de transactions, la gestion de la pagination, 
+    la collecte des données et leur sauvegarde dans un fichier à la fin.
+
+    :param token: Token de session pour l'authentification. Il est nécessaire pour valider les requêtes de l'API.
+    :param details: Booléen déterminant si des détails supplémentaires sur chaque transaction doivent être récupérés. 
+                    Si `True`, chaque transaction sera enrichie de données supplémentaires ; sinon, seules les transactions de base seront récupérées.
+    :return: Elle sauvegarde les données récupérées dans un fichier (soit JSON, soit CSV) dans le dossier spécifié.
     """
     all_data = []
-    message_id = 1
+    message_id = 0
 
     async with websockets.connect("wss://api.traderepublic.com") as websocket:
-        locale_config = {"locale": "fr"}
+        locale_config = {
+            "locale": "fr",
+            "platformId": "webtrading",
+            "platformVersion": "safari - 18.3.0",
+            "clientId": "app.traderepublic.com",
+            "clientVersion": "3.151.3"
+        }
         await websocket.send(f"connect 31 {json.dumps(locale_config)}")
         await websocket.recv()  # Réponse de connexion
 
@@ -108,11 +167,12 @@ async def fetch_all_transactions(token):
             payload = {"type": "timelineTransactions", "token": token}
             if after_cursor:
                 payload["after"] = after_cursor
-            
-            await websocket.send(f"sub {message_id} {json.dumps(payload)}")
+
             message_id += 1
-            
+            await websocket.send(f"sub {message_id} {json.dumps(payload)}")
             response = await websocket.recv()
+            await websocket.send(f"unsub {message_id}")
+            await websocket.recv()  # Confirmation de désabonnement
             start_index = response.find('{')
             end_index = response.rfind('}')
             response = response[start_index:end_index + 1] if start_index != -1 and end_index != -1 else "{}"
@@ -121,10 +181,17 @@ async def fetch_all_transactions(token):
             if not data.get("items"):
                 break
 
-            all_data.extend(data["items"])
+            if extract_details:
+                for transaction in data["items"]:
+                    transaction_id = transaction.get("id")
+                    if transaction_id:
+                        details, message_id = await fetch_transaction_details(websocket, transaction_id, token, message_id)
+                        transaction.update(details)
+                    all_data.append(transaction)
+            else:
+                all_data.extend(data["items"])
+
             after_cursor = data.get("cursors", {}).get("after")
-            await websocket.send(f"unsub {message_id}")
-            await websocket.recv()
             if not after_cursor:
                 break
         
@@ -137,6 +204,7 @@ async def fetch_all_transactions(token):
         flattened_data = flatten_and_clean_json(all_data)
         if flattened_data:
             df = pd.DataFrame(flattened_data)
+            df = df.dropna(axis=1, how='all')
             df = transform_data_types(df)
             output_path = os.path.join(output_folder, "trade_republic_transactions.csv")
             df.to_csv(output_path, index=False, sep=";", encoding="utf-8-sig")
@@ -148,10 +216,11 @@ if __name__ == "__main__":
     config.read('config.ini')
 
     # Variables de configuration
-    phone_number = config['secret']['phone_number']
-    pin = config['secret']['pin']
-    output_format = config['general']['output_format']  # Format de sortie : json ou csv
-    output_folder = config['general']['output_folder']
+    phone_number = config.get('secret', 'phone_number')
+    pin = config.getint('secret', 'pin')
+    output_format = config.get('general', 'output_format') # Format de sortie : json ou csv
+    output_folder = config.get('general', 'output_folder')
+    extract_details = config.getboolean('general', 'extract_details', fallback=False)
     os.makedirs(output_folder, exist_ok=True)
 
     # Validation du format de sortie
@@ -198,4 +267,4 @@ if __name__ == "__main__":
     print("✅ Token de connexion trouvé!")
 
     # Exécution de la récupération des transactions
-    asyncio.run(fetch_all_transactions(session_token))
+    asyncio.run(fetch_all_transactions(session_token, extract_details))
