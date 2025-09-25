@@ -2,7 +2,7 @@
 
 ## Description
 
-Ce projet permet d'extraire et de sauvegarder les transactions depuis l'API WebSocket de Trade Republic dans un fichier JSON ou CSV. Il nécessite une connexion à l'API via un numéro de téléphone et un code PIN. Une fois connecté, le script récupère toutes les transactions et les sauvegarde dans le format spécifié.
+Ce projet permet d'extraire et de sauvegarder certaines données depuis l'API WebSocket de Trade Republic dans plusieurs fichiers JSON ou CSV. Il nécessite une connexion à l'API via un numéro de téléphone et un code PIN. Une fois connecté, le script récupère certaines données et les sauvegarde dans le format spécifié.
 
 ## Prérequis
 
@@ -71,5 +71,6 @@ Les données seront sauvegardées dans le dossier spécifié sous le format choi
 
 - Connexion à l'API Trade Republic via WebSocket.
 - Extraction des transactions et des données associées.
+- Extraction du montant des liquidités du compte.
 - Support pour les formats de sortie JSON et CSV.
 - Conversion des dates et des montants au format français (DD/MM/YYYY).
