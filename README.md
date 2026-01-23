@@ -45,7 +45,7 @@ pip3 install -r requirements.txt -t lib
 Windows
 
 ```bash
-pip install requirements.txt -t lib
+pip install -r requirements.txt -t lib
 ```
 
 ## Utilisation
