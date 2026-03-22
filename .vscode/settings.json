@@ -1,6 +1,4 @@
 {
-    "python.analysis.extraPaths": [
-        "./lib"
-    ],
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
     "editor.formatOnSave": true
 }

@@ -7,7 +7,7 @@ Ce projet permet d'extraire et de sauvegarder certaines données depuis l'API We
 ## Prérequis
 
 - Python 3.
-- Libraries pandas, websockets et requests
+- Bibliothèques pandas, websockets et requests
 
 ## Installation
 
@@ -21,7 +21,7 @@ Ce projet permet d'extraire et de sauvegarder certaines données depuis l'API We
 - `output_folder`: Le dossier où les données exportées seront sauvegardées.
 - `extract_details`: Active la récupération du détail des transactions via l’appel timelineDetailV2 pour un historique plus complet (nombre de titres, cours du titre, impôt, etc.). Cela ralentit cependant le processus de collecte des informations.
 
-Exemple:
+Exemple :
 
 ```ini
 [secret]
@@ -34,31 +34,42 @@ output_folder = out
 extract_details = true
 ```
 
-Ouvrez votre invite de commandes / terminal, naviguez jusqu’au dossier `trade_republic_scraper` et installez les dépendances Python nécessaires :
+3. **Création et activation de l'environnement virtuel (.venv)**
 
-MacOS
+Ouvrez votre invite de commandes / terminal, naviguez jusqu’au dossier `trade_republic_scraper` et créez un environnement virtuel pour isoler les dépendances :
+
+**Création :**
+
+- Sur MacOS / Linux : `python3 -m venv .venv`
+- Sur Windows : `python -m venv .venv`
+
+**Activation :**
+
+- Sur MacOS / Linux : `source .venv/bin/activate`
+- Sur Windows (CMD) : `.venv\Scripts\activate.bat`
+- Sur Windows (PowerShell) : `.venv\Scripts\Activate.ps1`
+
+_(Astuce : Si vous ouvrez ce projet avec VS Code, l'éditeur devrait détecter le dossier `.venv` et l'activer automatiquement dans ses terminaux intégrés)._
+
+4. **Installation des dépendances**
+
+Une fois votre environnement activé (la mention `(.venv)` doit apparaître au début de votre ligne de commande), installez les dépendances requises :
 
 ```bash
-pip3 install -r requirements.txt -t lib
-```
-
-Windows
-
-```bash
-pip install -r requirements.txt -t lib
+pip install -r requirements.txt
 ```
 
 ## Utilisation
 
-Exécutez le script python `main.py` :
+Assurez-vous que votre environnement virtuel est activé, puis exécutez le script python `main.py` :
 
-MacOS
+MacOS / Linux :
 
 ```bash
 python3 main.py
 ```
 
-Windows
+Windows :
 
 ```bash
 python main.py

@@ -1,7 +1,3 @@
-import sys
-
-sys.path.insert(0, "./lib")
-
 import os
 import json
 import asyncio
@@ -9,7 +5,12 @@ import configparser
 import websockets
 import requests
 import pandas as pd
-
+import hashlib
+import uuid
+import base64
+import time
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
 def headers_to_dict(response):
     """
@@ -29,7 +30,6 @@ def headers_to_dict(response):
                 parsed_dict[key.strip()] = value.strip()
         extracted_headers[header] = parsed_dict if parsed_dict else header_value
     return extracted_headers
-
 
 def flatten_and_clean_json(all_data, sep="."):
     """
@@ -57,18 +57,14 @@ def flatten_and_clean_json(all_data, sep="."):
 
         return flat_dict
 
-    # Aplatir toutes les entrées et collecter toutes les colonnes possibles
     for item in all_data:
         flat_item = flatten(item)
         flattened_data.append(flat_item)
 
-    # Assurer que chaque dictionnaire a toutes les colonnes, avec ordre inchangé
     complete_data = [
         {key: item.get(key, None) for key in all_keys} for item in flattened_data
     ]
-
     return complete_data
-
 
 def transform_data_types(df):
     """
@@ -79,7 +75,7 @@ def transform_data_types(df):
     :param df: DataFrame contenant les données.
     :return: DataFrame transformé.
     """
-    timestamp_columns = ["timestamp"]  # Colonnes de type timestamp
+    timestamp_columns = ["timestamp"]
     for col in timestamp_columns:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%d/%m/%Y")
@@ -96,9 +92,67 @@ def transform_data_types(df):
             df[col] = df[col].apply(
                 lambda x: str(x).replace(".", ",") if pd.notna(x) else x
             )
-
     return df
 
+def generate_device_info():
+    """Génère dynamiquement un Device Info cohérent au format Base64"""
+    device_id = hashlib.sha512(uuid.uuid4().bytes).hexdigest()
+    device_info = {
+        "stableDeviceId": device_id,
+    }
+    return base64.b64encode(json.dumps(device_info).encode()).decode()
+
+def get_waf_token_with_selenium():
+    """Utilise Selenium en mode Headless pour obtenir le token AWS WAF silencieusement."""
+    print("🤖 Veuillez patienter, Selenium gère le navigateur en arrière-plan...")
+    
+    options = Options()
+    options.add_argument("--headless=new")
+    
+    try:
+        # Selenium 4 gère automatiquement le téléchargement du driver et du navigateur ici
+        driver = webdriver.Chrome(options=options)
+        
+        # Masquer encore plus le fait que ce soit un robot via CDP
+        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+            "source": """
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                })
+            """
+        })
+        
+        driver.get("https://app.traderepublic.com/")
+        # 5 secondes pour laisser le temps au WAF de se déclencher et de déposer le cookie
+        time.sleep(5)
+        
+        waf_token = None
+        
+        # Récupération via les cookies (Méthode principale)
+        for cookie in driver.get_cookies():
+            if "aws-waf-token" in cookie.get("name", ""):
+                waf_token = cookie["value"]
+                break
+                
+        # Récupération via l'API Javascript (Fallback si le cookie est caché)
+        if not waf_token:
+            try:
+                waf_token = driver.execute_script("return window.AWSWafIntegration && window.AWSWafIntegration.getToken();")
+            except:
+                pass
+                
+        driver.quit()
+        
+        if waf_token:
+            print("✅ Token de sécurité WAF récupéré avec succès !")
+            return waf_token
+        else:
+            print("⚠️ Impossible d'obtenir le token de sécurité automatiquement.")
+            return ""
+            
+    except Exception as e:
+        print(f"❌ Erreur lors de l'automatisation Selenium : {e}")
+        return ""
 
 async def connect_to_websocket():
     """
@@ -115,11 +169,10 @@ async def connect_to_websocket():
         "clientVersion": "3.151.3",
     }
     await websocket.send(f"connect 31 {json.dumps(locale_config)}")
-    await websocket.recv()  # Réponse de connexion
+    await websocket.recv()
 
-    print("✅ Connexion à la WebSocket réussie!\n⏳ Veuillez patienter...")
+    print("✅ Connexion à la WebSocket réussie!\n⏳ Récupération des données...")
     return websocket
-
 
 async def fetch_transaction_details(websocket, transaction_id, token, message_id):
     """
@@ -165,7 +218,6 @@ async def fetch_transaction_details(websocket, transaction_id, token, message_id
                     transaction_data[header] = value
 
     return transaction_data, message_id
-
 
 async def fetch_all_transactions(token, extract_details):
     """
@@ -241,7 +293,6 @@ async def fetch_all_transactions(token, extract_details):
             df.to_csv(output_path, index=False, sep=";", encoding="utf-8-sig")
             print("✅ Données sauvegardées dans 'trade_republic_transactions.csv'")
 
-
 async def profile_cash(token):
     """
     Récupère les informations de profil de l'utilisateur via WebSocket.
@@ -279,54 +330,80 @@ async def profile_cash(token):
                 df.to_csv(output_path, index=False, sep=";", encoding="utf-8-sig")
                 print("✅ Données sauvegardées dans 'trade_republic_profile_cash.csv'")
 
-
 if __name__ == "__main__":
     # Chargement de la configuration
     config = configparser.ConfigParser()
     config.read("config.ini")
 
     # Variables de configuration
-    phone_number = config.get("secret", "phone_number")
-    pin = config.get("secret", "pin")
-    output_format = config.get(
-        "general", "output_format"
-    )  # Format de sortie : json ou csv
-    output_folder = config.get("general", "output_folder")
+    try:
+        phone_number = config.get("secret", "phone_number")
+        pin = config.get("secret", "pin")
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        print("❌ Erreur : Veuillez vérifier que 'phone_number' et 'pin' sont bien renseignés dans config.ini")
+        exit()
+    
+    # Paramètres WAF et Device (optionnels dans le config.ini, générés automatiquement sinon)
+    waf_token = config.get("secret", "waf_token", fallback="")
+    device_info = config.get("secret", "device_info", fallback="")
+    
+    output_format = config.get("general", "output_format", fallback="csv")
+    output_folder = config.get("general", "output_folder", fallback="out")
     extract_details = config.getboolean("general", "extract_details", fallback=False)
     os.makedirs(output_folder, exist_ok=True)
 
-    # Validation du format de sortie
     if output_format.lower() not in ["json", "csv"]:
-        print(
-            f"❌ Le format '{output_format}' est inconnu. Veuillez saisir 'json' ou 'csv'."
-        )
+        print(f"❌ Le format '{output_format}' est inconnu. Veuillez saisir 'json' ou 'csv'.")
         exit()
 
+    # Si les tokens ne sont pas écrits en dur dans config.ini, on les génère automatiquement
+    if not device_info:
+        device_info = generate_device_info()
+    
+    if not waf_token:
+        waf_token = get_waf_token_with_selenium()
+
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+        "Accept": "*/*",
+        "Accept-Language": "fr",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/json",
+        "Pragma": "no-cache",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "x-aws-waf-token": waf_token,
+        "x-tr-app-version": "13.40.5",
+        "x-tr-device-info": device_info,
+        "x-tr-platform": "web"
     }
 
-    response = requests.post(
+    print("📡 Tentative de connexion à l'API Trade Republic...")
+    login_response = requests.post(
         "https://api.traderepublic.com/api/v1/auth/web/login",
         json={"phoneNumber": phone_number, "pin": pin},
         headers=headers
-    ).json()
-
-    # Récupération des informations de connexion
-    process_id = response.get("processId")
-    countdown = response.get("countdownInSeconds")
-    if not process_id:
-        print(
-            "❌ Échec de l'initialisation de la connexion. Vérifiez votre numéro de téléphone et PIN."
-        )
-        exit()
-
-    # Saisie du code 2FA
-    code = input(
-        f"❓ Entrez le code 2FA reçu ({countdown} secondes restantes) ou tapez 'SMS': "
     )
 
-    # Si l'utilisateur choisit de recevoir le code 2FA par SMS, une requête est envoyée pour renvoyer le code.
+    if login_response.status_code != 200:
+        print(f"❌ Erreur lors de la connexion à l'API Trade Republic (Code HTTP {login_response.status_code}).")
+        print("Le pare-feu Amazon (WAF) a probablement bloqué la requête ou le jeton a expiré.")
+        print(f"Détails bruts : {login_response.text}")
+        exit()
+
+    try:
+        login_data = login_response.json()
+    except ValueError:
+        print("❌ L'API n'a pas renvoyé de JSON valide.")
+        exit()
+
+    process_id = login_data.get("processId")
+    countdown = login_data.get("countdownInSeconds")
+    
+    if not process_id:
+        print("❌ Échec de l'initialisation de la connexion. Vérifiez vos identifiants.")
+        exit()
+
+    code = input(f"❓ Entrez le code 2FA reçu ({countdown} secondes restantes) ou tapez 'SMS': ")
+
     if code == "SMS":
         requests.post(
             f"https://api.traderepublic.com/api/v1/auth/web/login/{process_id}/resend",
@@ -334,29 +411,26 @@ if __name__ == "__main__":
         )
         code = input("❓ Entrez le code 2FA reçu par SMS: ")
 
-    # Vérification de l'appareil avec le code 2FA saisi.
-    response = requests.post(
+    verify_response = requests.post(
         f"https://api.traderepublic.com/api/v1/auth/web/login/{process_id}/{code}",
         headers=headers
     )
-    if response.status_code != 200:
-        print(
-            "❌ Échec de la vérification de l'appareil. Vérifiez le code et réessayez."
-        )
+    
+    if verify_response.status_code != 200:
+        print(f"❌ Échec de la vérification de l'appareil (Code HTTP {verify_response.status_code}).")
+        print(f"Détails bruts : {verify_response.text}")
         exit()
 
     print("✅ Appareil vérifié avec succès!")
 
-    # Extraction du token de session
-    response_headers = headers_to_dict(response)
+    response_headers = headers_to_dict(verify_response)
     session_token = response_headers.get("Set-Cookie", {}).get("tr_session")
+    
     if not session_token:
-        print("❌ Token de connexion introuvable.")
+        print("❌ Token de connexion introuvable. Trade Republic a peut-être changé sa méthode d'authentification.")
         exit()
 
-    print("✅ Token de connexion trouvé!")
+    print("✅ Token de session récupéré avec succès!")
 
-    # Exécution de la récupération des transactions
     asyncio.run(fetch_all_transactions(session_token, extract_details))
-    # Exécution de la récupération des informations de profil
     asyncio.run(profile_cash(session_token))
