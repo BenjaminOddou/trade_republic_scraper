@@ -7,7 +7,7 @@ Ce projet permet d'extraire et de sauvegarder certaines données depuis l'API We
 ## Prérequis
 
 - Python 3.
-- Bibliothèques pandas, websockets et requests
+- Bibliothèques pandas, websockets, requests et selenium.
 
 ## Installation
 
